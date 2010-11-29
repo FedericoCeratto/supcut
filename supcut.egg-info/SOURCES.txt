@@ -7,4 +7,5 @@ supcut.egg-info/SOURCES.txt
 supcut.egg-info/dependency_links.txt
 supcut.egg-info/entry_points.txt
 supcut.egg-info/not-zip-safe
+supcut.egg-info/requires.txt
 supcut.egg-info/top_level.txt

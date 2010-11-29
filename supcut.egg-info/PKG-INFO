@@ -7,6 +7,9 @@ Author: Federico Ceratto
 Author-email: federico.ceratto@gmail.com
 License: GPLv3
 Description: A rather hassle-free tool to run nose based unit testing locally.
+        It runs nosetests upon any file change and displays changes in the sets of
+        failing or successful tests via OSD.
+        
 Keywords: nose unit-testing
 Platform: UNKNOWN
 Classifier: Environment :: Console
