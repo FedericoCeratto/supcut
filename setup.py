@@ -7,7 +7,10 @@ setup(name='supcut',
       version=version,
       description="Simple unobtrusive Python continuous unit testing",
       long_description="""\
-A rather hassle-free tool to run nose based unit testing locally.""",
+A rather hassle-free tool to run nose based unit testing locally.
+It runs nosetests upon any file change and displays changes in the sets of
+failing or successful tests via OSD.
+""",
       classifiers=[
         'Environment :: Console',
         'Intended Audience :: Developers',
@@ -26,7 +29,8 @@ A rather hassle-free tool to run nose based unit testing locally.""",
       include_package_data=True,
       zip_safe=False,
       install_requires=[
-          # -*- Extra requirements: -*-
+        'pyinotify',
+        '',
       ],
       entry_points={
         'console_scripts': ['supcut = supcut.supcut:main'],
