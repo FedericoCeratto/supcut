@@ -21,12 +21,12 @@ import gtk
 from os import makedirs, rename
 from os.path import isdir, isfile
 import pynotify as osd  # this is Notify (OSD messages)
-import pyinotify             # this is Inotify (file alteration)
+import pyinotify        # this is Inotify (file alteration)
 from subprocess import Popen, PIPE, STDOUT
 
 from mailer import send_email
 
-__version__ = '0.1'
+__version__ = '0.5'
 
 conf = None
 
