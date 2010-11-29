@@ -1,0 +1,11 @@
+Metadata-Version: 1.0
+Name: supcut
+Version: 0.5dev
+Summary: Simple unobtrusive Python continuous unit testing
+Home-page: https://github.com/FedericoCeratto/supcu
+Author: Federico Ceratto
+Author-email: federico.ceratto@gmail.com
+License: GPLv3
+Description: A rather hassle-free tool to run nose based unit testing locally.
+Keywords: nose unit-testing
+Platform: UNKNOWN
