@@ -1,6 +1,6 @@
 Metadata-Version: 1.0
 Name: supcut
-Version: 0.5
+Version: 0.5.1
 Summary: Simple unobtrusive Python continuous unit testing
 Home-page: http://github.com/FedericoCeratto/supcut
 Author: Federico Ceratto
