@@ -18,15 +18,17 @@
 
 from ConfigParser import SafeConfigParser
 import gtk
-from os import makedirs, rename
+from os import getcwd, makedirs, rename
 from os.path import isdir, isfile
 import pynotify as osd  # this is Notify (OSD messages)
 import pyinotify        # this is Inotify (file alteration)
+from shutil import copyfile
 from subprocess import Popen, PIPE, STDOUT
+from sys import exit
 
 from mailer import send_email
 
-__version__ = '0.5.1'
+__version__ = '0.5.2'
 
 conf = None
 
@@ -35,52 +37,43 @@ def say(s):
         print s
     elif not conf.quiet:
         print s
-    
+
 def whisper(s):
     """Print only in verbose mode"""
     if conf.verbose and not conf.quiet:
         say(s)
 
-def create_conffile(fn):
-    """Create configuration file"""
-    config = """
-[global]
-verbose = False
-quiet = False
-send_osd_notifications = True
+def dir_setup():
+    """Setup .supcut directory"""
+    say("""First supcut run: a directory called .supcut should
+be created at the root directory of your project.
 
-# Comma separated files, wildcards are allowed
-# *.py, tests/*.py, tests/*ini
-files = *.py, tests/*.py
+The current path is: %s""" % getcwd())
+    a = raw_input('Create .supcut directory [y/N]? ')
+    if a != 'y':
+        exit(0)
+    makedirs('.supcut')
+    say("Creating configuration file")
+    copyfile('/usr/share/doc/python-supcut/examples/config.ini',
+        '.supcut/config.ini')
+    say("Creating email template file")
+    copyfile('/usr/share/doc/python-supcut/examples/email.tpl',
+        '.supcut/email.tpl')
 
-cmd = nosetests test.py
-
-[email]
-# To disable email delivery, just leave an empty server string.
-# server = localhost
-server = 
-sender = supcut@localhost
-# Comma separated list of receivers
-receivers = root@localhost
-subject_tag = [supcut]
-"""
-    f = open(fn, 'w')
-    f.write(config)
-    f.close()
 
 class Conf(object):
     """Read configuration file, create it as well as .supcut if needed"""
-    
+
     def __init__(self):
         if not isdir('.supcut'):
-            say("First supcut run: creating .supcut directory")
-            makedirs('.supcut')
-        if not isfile('.supcut/config.ini'):
-            say("Creating configuration file")
-            create_conffile('.supcut/config.ini')
+            dir_setup()
+        for fn in ('.supcut/config.ini', '.supcut/email.tpl'):
+            if not isfile(fn):
+                say("The file %s is missing." % fn)
+                exit(1)
         self.cp = SafeConfigParser()
         self.cp.read('.supcut/config.ini')
-        
+
     def __getattr__(self, name):
         """Expose a conf variable as an attr"""
         if name in ('verbose', 'quiet', 'send_osd_notifications'):
@@ -109,7 +102,7 @@ def send_osd(title, s, icon=None):
     #n.add_action("clicked","Button text", callback_function, None)
     helper = gtk.Button()
     #        icon = gtk.gdk.pixbuf_new_from_file(RESOURCES + "audio-x-generic.png")
-    
+
     if icon == 'success':
         i = helper.render_icon(gtk.STOCK_YES, gtk.ICON_SIZE_DIALOG)
     elif icon == 'failure':
@@ -118,7 +111,7 @@ def send_osd(title, s, icon=None):
         i = helper.render_icon(gtk.STOCK_ADD, gtk.ICON_SIZE_DIALOG)
     else:
         i = helper.render_icon(gtk.STOCK_GO_FORWARD, gtk.ICON_SIZE_DIALOG)
-    
+
     n.set_icon_from_pixbuf(i)
     n.show()
 
@@ -135,11 +128,11 @@ def get_trace(out, name):
     if trace:
         return trace
     return []
-    
+
 
 class Runner(pyinotify.ProcessEvent):
     """Run nosetests when needed"""
-    
+
     def _failing(self, out):
         """Get failing tests"""
         failing = [s for s in out if s.startswith('FAIL: ')]
@@ -152,18 +145,18 @@ class Runner(pyinotify.ProcessEvent):
           stdout=PIPE, stderr=STDOUT, close_fds=True)
         out = p.stdout.readlines()
         save(out)
-        
+
         failing = self._failing(out)
         old = open('.supcut/output.old').readlines()
         failing_old = self._failing(old)
-        
+
         new_failing = failing - failing_old
         fixed = failing_old - failing
-        
+
         for name in fixed:
             send_email(conf, 'success', name, [])
             send_osd(name, 'Test fixed!', icon='success')
-        
+
         for name in new_failing:
             trace = get_trace(out, name)
             send_email(conf, 'failure', name, trace)
@@ -184,18 +177,18 @@ def main():
 
     wm = pyinotify.WatchManager()
     notifier = pyinotify.Notifier(wm, default_proc_fun=Runner())
-    
+
     watched = []
     for p in conf.files.split(','):
         p = p.strip()
         w = wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False, do_glob=True)
         watched.extend(w)
-        
+
     say("%d files monitored" % len(watched))
     for fn in watched:
         whisper(" %s" % fn)
     notifier.loop()
 
-    
+
 if __name__ == '__main__':
     main()

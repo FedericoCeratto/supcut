@@ -19,6 +19,7 @@
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from smtplib import SMTP
+from string import Template
 
 colors = {
     'success': '#eeffee',
@@ -35,37 +36,34 @@ def send_email(conf, category, name, out):
     msg['Subject'] = "%s %s: %s " % (conf.email_subject_tag, category, name)
     msg['From'] = conf.email_sender
     msg['To'] = conf.email_receivers
-    
-    background = colors[category]
 
-    html = """
-<html>
-  <style>
-    div {
-        background-color: """ + background + """;
-        border: 1px solid #bbbbb;
-        padding: 0.2em;
-        width: 40%;
-        margin: 1em;
-    }
-    div p {
-        font-size: 110%;
-        padding-left: 1em;
-    }
-    </style>
-  <body>
-    <p>Automated email from Supcut</p>
-    <div><p>""" + category + ":" + name + """</p><div>
-    <p>""" + '</br>'.join(out) + """</p>
-  </body>
-</html>
-"""
+    d = dict(
+        bgcolor = colors[category],
+        category = category,
+        name = name,
+        output = '<br/>'.join(out),
+        tag = conf.email_subject_tag,
+        sender = conf.email_sender,
+        receivers = conf.email_receivers
+    )
+
+    tpl = open('.supcut/email.tpl').read()
+    tpl = Template(tpl)
+    html = tpl.safe_substitute(d)
 
     # Record the MIME type
     part = MIMEText(html, 'html')
 
     # Attach parts into message container.
     msg.attach(part)
+
+    # adding icon
+    from email.MIMEImage import MIMEImage
+
+    image = open('/usr/share/pixmaps/faces/penguin.jpg', 'rb').read()
+    image = MIMEImage(image)
+    image.add_header('Content-ID', '<image1>')
+    msg.attach(image)
 
     try:
         session = SMTP(conf.email_server)
