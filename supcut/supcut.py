@@ -28,20 +28,23 @@ from sys import exit
 
 from mailer import send_email
 
-__version__ = '0.5.2'
+__version__ = '0.5.3'
 
 conf = None
 
-def say(s):
-    if not conf:
+def say(s, newline=True):
+    """Print unless in quiet mode"""
+    if conf and conf.quiet:
+        return
+    if newline:
         print s
-    elif not conf.quiet:
-        print s
+    else:
+        print s,
 
-def whisper(s):
+def whisper(s, newline=True):
     """Print only in verbose mode"""
     if conf.verbose and not conf.quiet:
-        say(s)
+        say(s, newline=newline)
 
 def dir_setup():
     """Setup .supcut directory"""
@@ -84,7 +87,7 @@ class Conf(object):
 
 
 def save(out):
-    """Save new output renaming the old one"""
+    """Save new output after renaming the previous one"""
     f = open('.supcut/output.new', 'w')
     f.writelines(out)
     f.close()
@@ -138,6 +141,13 @@ class Runner(pyinotify.ProcessEvent):
         failing = [s for s in out if s.startswith('FAIL: ')]
         return frozenset(s.strip()[6:] for s in failing)
 
+    def _tot(self, out):
+        """Get total number of tests ran."""
+        for last in xrange(6):
+            if out[-last].startswith('Ran '):
+                li = out[-last].split()
+                return int(li[1])
+
     def _run_nose(self):
         """Run nosetests, collects output"""
 
@@ -146,12 +156,15 @@ class Runner(pyinotify.ProcessEvent):
         out = p.stdout.readlines()
         save(out)
 
+        tot = self._tot(out)
         failing = self._failing(out)
         old = open('.supcut/output.old').readlines()
         failing_old = self._failing(old)
+        tot_old = self._tot(old)
 
         new_failing = failing - failing_old
         fixed = failing_old - failing
+        tot_diff = tot - tot_old
 
         for name in fixed:
             send_email(conf, 'success', name, [])
@@ -162,10 +175,19 @@ class Runner(pyinotify.ProcessEvent):
             send_email(conf, 'failure', name, trace)
             send_osd( name, 'Failing test', icon='failure')
 
+        if tot_diff > 0:
+            send_osd('New test', "%s test added" % tot_diff, icon='success')
+        elif tot_diff < 0:
+            send_osd('Test removed', "%s test added" % tot_diff, icon='success')
+
+        whisper('\n')
+        whisper(''.join(out))
+        say("%d tests ran." % tot)
+
 
     def process_IN_MODIFY(self, event):
         whisper("%s has been modified" % event.path)
-        say("Running nosetests...")
+        say("Running nosetests...", newline=False)
         self._run_nose()
 
 
@@ -183,6 +205,7 @@ def main():
         p = p.strip()
         w = wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False, do_glob=True)
         watched.extend(w)
+        print p, 'added'
 
     say("%d files monitored" % len(watched))
     for fn in watched:
