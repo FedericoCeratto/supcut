@@ -148,6 +148,7 @@ class Runner(pyinotify.ProcessEvent):
                 li = out[-last].split()
                 return int(li[1])
 
+    # FIXME: note is being run two times on each file change
     def _run_nose(self):
         """Run nosetests, collects output"""
 
@@ -205,7 +206,6 @@ def main():
         p = p.strip()
         w = wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False, do_glob=True)
         watched.extend(w)
-        print p, 'added'
 
     say("%d files monitored" % len(watched))
     for fn in watched:
