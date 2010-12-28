@@ -186,7 +186,8 @@ class Runner(pyinotify.ProcessEvent):
         say("%d tests ran." % tot)
 
 
-    def process_IN_MODIFY(self, event):
+    def process_IN_CLOSE_WRITE(self, event):
+        """Run nose when any monitored file has been modified"""
         whisper("%s has been modified" % event.path)
         say("Running nosetests...", newline=False)
         self._run_nose()
