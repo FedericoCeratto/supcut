@@ -179,7 +179,7 @@ class Runner(pyinotify.ProcessEvent):
         if tot_diff > 0:
             send_osd('New test', "%s test added" % tot_diff, icon='success')
         elif tot_diff < 0:
-            send_osd('Test removed', "%s test added" % tot_diff, icon='success')
+            send_osd('Test removed', "%s test removed" % -tot_diff, icon='success')
 
         whisper('\n')
         whisper(''.join(out))
