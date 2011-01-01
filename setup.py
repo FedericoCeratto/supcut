@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import sys, os
 
-version='0.5.3'
+version='0.5.4'
 
 setup(name='supcut',
       version=version,
@@ -30,7 +30,6 @@ failing or successful tests via OSD.
       zip_safe=False,
       install_requires=[
         'pyinotify',
-        'pygtk',
       ],
       entry_points={
         'console_scripts': ['supcut = supcut.supcut:main'],
