@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #
 # supcut - Simple Unobtrusive Python Contituous Unit Testing
 #
@@ -18,6 +19,7 @@
 
 from ConfigParser import SafeConfigParser
 import gtk
+from optparse import OptionParser
 from os import getcwd, makedirs, rename
 from os.path import isdir, isfile
 import pynotify as osd  # this is Notify (OSD messages)
@@ -28,9 +30,10 @@ from sys import exit
 
 from mailer import send_email
 
-__version__ = '0.5.3'
+__version__ = '0.5.4'
 
 conf = None
+cli_opts = None
 
 def say(s, newline=True):
     """Print unless in quiet mode"""
@@ -65,7 +68,7 @@ The current path is: %s""" % getcwd())
 
 
 class Conf(object):
-    """Read configuration file, create it as well as .supcut if needed"""
+    """Read configuration file, and create the .supcut directory if needed"""
 
     def __init__(self):
         if not isdir('.supcut'):
@@ -149,11 +152,15 @@ class Runner(pyinotify.ProcessEvent):
                 return int(li[1])
 
     # FIXME: note is being run two times on each file change
-    def _run_nose(self):
+    def run_nose(self):
         """Run nosetests, collects output"""
-
-        p = Popen(conf.cmd, shell=True, bufsize=4096,
-          stdout=PIPE, stderr=STDOUT, close_fds=True)
+#        if hasattr(cli_opts, 'cmd'):
+#            cmd = cli_opts.cmd
+#        else:
+#            cmd = conf.cmd
+        cmd = conf.cmd
+        p = Popen(cmd, shell=True, bufsize=4096,
+            stdout=PIPE, stderr=STDOUT, close_fds=True)
         out = p.stdout.readlines()
         save(out)
 
@@ -190,14 +197,30 @@ class Runner(pyinotify.ProcessEvent):
         """Run nose when any monitored file has been modified"""
         whisper("%s has been modified" % event.path)
         say("Running nosetests...", newline=False)
-        self._run_nose()
+        self.run_nose()
 
+def parse_args():
+    parser = OptionParser()
+    parser.add_option("-n", "--now",
+        action="store_true", dest="run_now", default=False,
+        help="run nosetests immediately")
+    parser.add_option("-c", "--cmd",
+        dest="cmd", help="command to be run")
+
+    options, args = parser.parse_args()
+    return options
 
 def main():
     """Read conf, setup Inotify watching"""
     global conf
+    global cli_opts
+
     conf = Conf()
     say("Supcut v. %s" % __version__)
+    cli_opts = parse_args()
+
+    if cli_opts.run_now:
+        Runner().run_nose()
 
     wm = pyinotify.WatchManager()
     notifier = pyinotify.Notifier(wm, default_proc_fun=Runner())
