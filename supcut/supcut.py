@@ -18,6 +18,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from ConfigParser import SafeConfigParser
+import curses
+#TODO: make gtk and pynotify modules optional
 import gtk
 from optparse import OptionParser
 from os import getcwd, makedirs, rename
@@ -25,20 +27,22 @@ from os.path import isdir, isfile
 import pynotify as osd  # this is Notify (OSD messages)
 import pyinotify        # this is Inotify (file alteration)
 from shutil import copyfile
+from setproctitle import setproctitle
 from subprocess import Popen, PIPE, STDOUT
 from sys import exit
+from threading import Lock
+from time import gmtime, strftime
 
 from mailer import send_email
 
-__version__ = '0.5.4'
+__version__ = '0.6-unreleased'
 
-conf = None
-cli_opts = None
+supcut = None
 
 def say(s, newline=True):
     """Print unless in quiet mode"""
-    if conf and conf.quiet:
-        return
+#    if conf and conf.quiet:
+#        return
     if newline:
         print s
     else:
@@ -46,25 +50,17 @@ def say(s, newline=True):
 
 def whisper(s, newline=True):
     """Print only in verbose mode"""
+    return
     if conf.verbose and not conf.quiet:
         say(s, newline=newline)
 
-def dir_setup():
-    """Setup .supcut directory"""
-    say("""First supcut run: a directory called .supcut should
-be created at the root directory of your project.
 
-The current path is: %s""" % getcwd())
-    a = raw_input('Create .supcut directory [y/N]? ')
-    if a != 'y':
-        exit(0)
-    makedirs('.supcut')
-    say("Creating configuration file")
-    copyfile('/usr/share/doc/python-supcut/examples/config.ini',
-        '.supcut/config.ini')
-    say("Creating email template file")
-    copyfile('/usr/share/doc/python-supcut/examples/email.tpl',
-        '.supcut/email.tpl')
+#menu = [
+#    ['Monitored files', [], set()],
+#    ['Test files', [], set()],
+#    ['Failing tests', [], set()],
+#    ['Test output']
+#]
 
 
 class Conf(object):
@@ -72,7 +68,7 @@ class Conf(object):
 
     def __init__(self):
         if not isdir('.supcut'):
-            dir_setup()
+            self._dir_setup()
         for fn in ('.supcut/config.ini', '.supcut/email.tpl'):
             if not isfile(fn):
                 say("The file %s is missing." % fn)
@@ -88,61 +84,291 @@ class Conf(object):
             return self.cp.get('email', name[6:])
         return self.cp.get('global', name)
 
+    def _dir_setup(self):
+        """Setup .supcut directory"""
+        say("""First supcut run: a directory called .supcut should
+    be created at the root directory of your project.
 
-def save(out):
-    """Save new output after renaming the previous one"""
-    f = open('.supcut/output.new', 'w')
-    f.writelines(out)
-    f.close()
-    if not isfile('.supcut/output'):
-        open('.supcut/output', 'w').close()
-    rename('.supcut/output', '.supcut/output.old')
-    rename('.supcut/output.new', '.supcut/output')
+    The current path is: %s""" % getcwd())
+        a = raw_input('Create .supcut directory [y/N]? ')
+        if a != 'y':
+            exit(0)
+        makedirs('.supcut')
+        say("Creating configuration file")
+        copyfile('/usr/share/doc/python-supcut/examples/config.ini',
+            '.supcut/config.ini')
+        say("Creating email template file")
+        copyfile('/usr/share/doc/python-supcut/examples/email.tpl',
+            '.supcut/email.tpl')
 
 
-def send_osd(title, s, icon=None):
-    """Notify the user using OSD"""
-    n = osd.Notification(title, s)
-    #n.set_urgency(osd.URGENCY_NORMAL)
-    #n.set_timeout(osd.EXPIRES_NEVER)
-    #n.add_action("clicked","Button text", callback_function, None)
-    helper = gtk.Button()
-    #        icon = gtk.gdk.pixbuf_new_from_file(RESOURCES + "audio-x-generic.png")
+class Screen(object):
+    """Handle ncurses screen"""
 
-    if icon == 'success':
-        i = helper.render_icon(gtk.STOCK_YES, gtk.ICON_SIZE_DIALOG)
-    elif icon == 'failure':
-        i = helper.render_icon(gtk.STOCK_NO, gtk.ICON_SIZE_DIALOG)
-    elif icon == 'new_test':
-        i = helper.render_icon(gtk.STOCK_ADD, gtk.ICON_SIZE_DIALOG)
-    else:
-        i = helper.render_icon(gtk.STOCK_GO_FORWARD, gtk.ICON_SIZE_DIALOG)
+    def __init__(self, parent=None):
+        """Setup curses screen"""
+        self._supcut = parent
+        self._menu = [
+            ['Monitored files', self._supcut.watched,
+                self._supcut.watched_selected],
+            ['Test files', self._supcut.test_files,
+                self._supcut.test_files_selected],
+            ['Failing tests',self._supcut.failing_tests,
+                self._supcut.failing_tests_selected],
+            ['Test output']
+        ]
 
-    n.set_icon_from_pixbuf(i)
-    n.show()
+        self._current_menu = 0
+        self._y = 0
+        self._scroll = 0
+        self._cursor = 1
+        self._overflow = False
 
-def get_trace(out, name):
-    """Extract the test failure trace related to a failing test"""
-    trace = None
-    for line in out:
-        if line == "FAIL: %s\n" % name:
-           trace = []
-        elif trace != None:
-            if line.startswith('=' * 10):
-                return trace
-            trace.append(line.strip())
-    if trace:
-        return trace
-    return []
+
+        screen = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        screen.keypad(1)
+        screen.border(0)
+        screen.refresh()
+        self._screen = screen
+
+    def _blank(self):
+        """Erase the screen"""
+        self._screen.erase()
+        self._screen.border(0)
+        self._cursor = 1
+        self._overflow = False
+
+    def _print(self, s, bold=None):
+        """Print on curses screen"""
+        max_y, max_x = self._screen.getmaxyx()
+
+        if s == None or s.strip() == '':
+            self._cursor += 1
+
+        s = s.rstrip()
+        w = max_x - 4
+        chunks = (s[i:i+w] for i in xrange(0, len(s), w))
+        for line in chunks:
+            try:
+                if self._cursor == max_y - 2:
+                    self._screen.addstr(self._cursor, 4, "vvv")
+                    self._overflow = True
+                    return
+                elif self._cursor > max_y - 2:
+                    return
+                if bold:
+                    self._screen.addstr(self._cursor, 2, line, curses.A_BOLD)
+                else:
+                    self._screen.addstr(self._cursor, 2, line)
+            except:
+                pass
+            self._cursor += 1
+
+    def _print_column(self):
+        """Print items in a column flagging the selected ones,
+        highlighting one of them"""
+        self._menu = (
+            ['Monitored files', self._supcut.watched,
+                self._supcut.watched_selected],
+            ['Test files', self._supcut.test_files,
+                self._supcut.test_files_selected],
+            ['Failing tests',self._supcut.failing_tests,
+                self._supcut.failing_tests_selected],
+            ['Test output']
+        )
+        title, li, selected = self._menu[self._current_menu]
+        if self._scroll:
+            self._print("   ^^^")
+        for n, item in enumerate(li[self._scroll:]):
+            sel = item in selected
+            sel = "+" if sel else " "
+            bold = (n == self._y)
+            self._print(" %s %s" % (sel, item), bold=bold)
+
+    def _print_failing_test(self):
+        """Print the output of a failing test"""
+        try:
+            test_name = self._supcut.failing_tests[self._y]
+        except IndexError:
+            self._current_menu = 2
+            return
+
+        self._print("     -- %s --" % test_name)
+        for line in self._supcut.failing_tests_dict[test_name][self._scroll:]:
+            self._print(line)
+
+    def refresh(self):
+        """Refresh curses screen"""
+        self._blank()
+
+        sup = self._supcut
+        with sup.lock:
+            self._print("Watched: %3d  Tot: %3d  Failed: %3d  \
+Last run: %8s  Running: [%s]" % (
+                len(sup.watched_selected),
+                sup.total_tests_n,
+                len(sup.failing_tests),
+                sup.last_run,
+                "*" if sup.currently_running.locked() else " "
+            ))
+
+        s = self._screen
+        col = 2
+        for n in xrange(4):
+            title = self._menu[n][0]
+            if n == self._current_menu:
+                s.addstr(2, col, title, curses.A_BOLD)
+            else:
+                s.addstr(2, col, title)
+            col += len(title) + 2
+        self._cursor = 4
+        if self._current_menu < 3:
+            self._print_column()
+        elif self._current_menu == 3:
+            self._print_failing_test()
+
+        s.refresh()
+
+    def handle_keypress(self):
+        """Handle user input"""
+        c = self._screen.getch()
+
+        # quit
+        if c == ord('q'):
+            self._supcut.terminate()
+            raise KeyboardInterrupt
+
+        # move between menus
+        elif c == curses.KEY_LEFT:
+            if self._current_menu:
+                self._current_menu -=1
+            else:
+                self._current_menu = 2
+            self._y = 0
+            self._scroll = 0
+        elif c == curses.KEY_RIGHT:
+            if self._current_menu < len(self._menu) - 2:
+                self._current_menu +=1
+            else:
+                self._current_menu = 0
+            self._y = 0
+            self._scroll = 0
+
+        # move up/down
+        elif c == curses.KEY_DOWN:
+            # test output tab
+            if self._current_menu == 3:
+                if self._overflow:
+                    self._scroll += 1
+                return
+            max_y, max_x = self._screen.getmaxyx()
+            depth = len(self._menu[self._current_menu][1]) - self._scroll
+            if self._y < max_y - 7 and self._y < depth - 1:
+                self._y +=1
+
+        elif c == curses.KEY_UP:
+            # test output tab
+            if self._current_menu == 3:
+                if self._scroll:
+                    self._scroll -= 1
+                return
+            if self._scroll and self._y == 0:
+                self._scroll -= 1
+            if self._y:
+                self._y -=1
+
+        # space: toggle item
+        elif c == ord(' '):
+            if self._current_menu < 3:
+                self._toggle()
+
+        # enter
+        elif c == ord('\n'):
+            if self._current_menu == 2:
+                self._current_menu = 3
+
+        # run test now
+        elif c == ord('r'):
+            self._supcut.run_test_now()
+
+
+
+    def _toggle(self):
+        """Toggle a menu item"""
+        title, li, selected = self._menu[self._current_menu]
+        try:
+            item = li[self._y]
+            selected = selected.symmetric_difference([item])
+            if self._current_menu == 0:
+                if item in self._supcut.watched_selected:
+                    self._supcut.watched_selected.remove(item)
+                    #FIXME
+                    self._supcut.remove_watch(item)
+                else:
+                    self._supcut.watched_selected.add(item)
+                    self._supcut.add_watch(item)
+
+            elif self._current_menu == 1:
+                self._supcut.test_files_selected = selected
+            elif self._current_menu == 2:
+                self._supcut.failing_tests_selected = selected
+        except IndexError:
+            pass
+
+
+    def _print_list(self):
+        """Print connections list"""
+        screen = self._screen
+        traffic = self.traffic
+        screen.erase()
+        screen.border(0)
+
+        screen.addstr(2, 2, "Total: %d Parsed: %d" % \
+            (self._stats['total'], self._stats['parsed']))
+        ln = 4
+        for pid in sorted(traffic):
+            screen.addstr(ln, 4, pid)
+            ln += 1
+            for src in sorted(traffic[pid]):
+                s = " %s %s" % (src, traffic[pid][src])
+                screen.addstr(ln, 4, s)
+                ln += 1
+            screen.addstr(ln, 4, '  ')
+            ln += 1
+        screen.refresh()
+
+    def terminate(self):
+        """Terminate curses screen"""
+        curses.nocbreak()
+        self._screen.keypad(0)
+        curses.echo()
+        curses.endwin()
+
+
+
+
 
 
 class Runner(pyinotify.ProcessEvent):
     """Run nosetests when needed"""
 
+    # nosetest related methods
+
     def _failing(self, out):
-        """Get failing tests"""
-        failing = [s for s in out if s.startswith('FAIL: ')]
-        return frozenset(s.strip()[6:] for s in failing)
+        """Build failing tests set and dict"""
+        d = {}
+        title = None
+        for line in out:
+            if line.startswith('FAIL: '):
+                title = line.strip()[6:]
+                d[title] = []
+            elif title:
+                d[title].append(line)
+        #FIXME: line containing '============' should be removed
+        #FIXME: spurious "FAIL: " in the test output will break this
+        return frozenset(d.keys()), d
 
     def _tot(self, out):
         """Get total number of tests ran."""
@@ -151,23 +377,52 @@ class Runner(pyinotify.ProcessEvent):
                 li = out[-last].split()
                 return int(li[1])
 
+    def _save_output(self, out):
+        """Save new output after renaming the previous one"""
+        f = open('.supcut/output.new', 'w')
+        f.writelines(out)
+        f.close()
+        if not isfile('.supcut/output'):
+            open('.supcut/output', 'w').close()
+        rename('.supcut/output', '.supcut/output.old')
+        rename('.supcut/output.new', '.supcut/output')
+
+    def _get_trace(self, out, name):
+        """Extract the test failure trace related to a failing test"""
+        trace = None
+        for line in out:
+            if line == "FAIL: %s\n" % name:
+               trace = []
+            elif trace != None:
+                if line.startswith('=' * 10):
+                    return trace
+                trace.append(line.strip())
+        if trace:
+            return trace
+        return []
+
+
     # FIXME: note is being run two times on each file change
     def run_nose(self):
         """Run nosetests, collects output"""
-#        if hasattr(cli_opts, 'cmd'):
-#            cmd = cli_opts.cmd
-#        else:
-#            cmd = conf.cmd
-        cmd = conf.cmd
+        global supcut
+        supcut.currently_running.acquire()
+        supcut.screen.refresh()
+
+        cmd = "nosetests %s %s" % (
+            supcut.conf.nose_opts,
+            ' '.join(supcut.test_files_selected),
+        )
         p = Popen(cmd, shell=True, bufsize=4096,
             stdout=PIPE, stderr=STDOUT, close_fds=True)
         out = p.stdout.readlines()
-        save(out)
+        self._save_output(out)
 
         tot = self._tot(out)
-        failing = self._failing(out)
+        failing, failing_dict = self._failing(out)
+
         old = open('.supcut/output.old').readlines()
-        failing_old = self._failing(old)
+        failing_old, failing_old_dict = self._failing(old)
         tot_old = self._tot(old)
 
         new_failing = failing - failing_old
@@ -175,66 +430,157 @@ class Runner(pyinotify.ProcessEvent):
         tot_diff = tot - tot_old
 
         for name in fixed:
-            send_email(conf, 'success', name, [])
-            send_osd(name, 'Test fixed!', icon='success')
+#            send_email(conf, 'success', name, []) FIXME
+            self._send_osd(name, 'Test fixed!', icon='success')
 
         for name in new_failing:
-            trace = get_trace(out, name)
-            send_email(conf, 'failure', name, trace)
-            send_osd( name, 'Failing test', icon='failure')
+            trace = self._get_trace(out, name)
+#            send_email(conf, 'failure', name, trace)
+            self._send_osd( name, 'Failing test', icon='failure')
 
         if tot_diff > 0:
-            send_osd('New test', "%s test added" % tot_diff, icon='success')
+            self._send_osd('New test', "%s test added" % tot_diff, icon='success')
         elif tot_diff < 0:
-            send_osd('Test removed', "%s test removed" % -tot_diff, icon='success')
+            self._send_osd('Test removed', "%s test removed" % -tot_diff, icon='success')
 
-        whisper('\n')
-        whisper(''.join(out))
-        say("%d tests ran." % tot)
+        tstamp = strftime("%H:%M:%S", gmtime())
+
+        with supcut.lock:
+            supcut.failing_tests = list(failing)
+            supcut.failing_tests_dict = failing_dict
+            supcut.failing_tests_selected = set(failing)
+            supcut.total_tests_n = tot
+            supcut.last_run = tstamp
+
+        supcut.currently_running.release()
+        supcut.screen.refresh()
+
+
 
 
     def process_IN_CLOSE_WRITE(self, event):
         """Run nose when any monitored file has been modified"""
-        whisper("%s has been modified" % event.path)
-        say("Running nosetests...", newline=False)
         self.run_nose()
 
-def parse_args():
-    parser = OptionParser()
-    parser.add_option("-n", "--now",
-        action="store_true", dest="run_now", default=False,
-        help="run nosetests immediately")
-    parser.add_option("-c", "--cmd",
-        dest="cmd", help="command to be run")
 
-    options, args = parser.parse_args()
-    return options
+    # OSD related methods
 
-def main():
-    """Read conf, setup Inotify watching"""
-    global conf
-    global cli_opts
+    def _send_osd(self, title, s, icon=None):
+        """Notify the user using OSD"""
+        n = osd.Notification(title, s)
+        #n.set_urgency(osd.URGENCY_NORMAL)
+        #n.set_timeout(osd.EXPIRES_NEVER)
+        #n.add_action("clicked","Button text", callback_function, None)
+        helper = gtk.Button()
+        #        icon = gtk.gdk.pixbuf_new_from_file(RESOURCES + "audio-x-generic.png")
 
-    conf = Conf()
-    say("Supcut v. %s" % __version__)
-    cli_opts = parse_args()
+        if icon == 'success':
+            i = helper.render_icon(gtk.STOCK_YES, gtk.ICON_SIZE_DIALOG)
+        elif icon == 'failure':
+            i = helper.render_icon(gtk.STOCK_NO, gtk.ICON_SIZE_DIALOG)
+        elif icon == 'new_test':
+            i = helper.render_icon(gtk.STOCK_ADD, gtk.ICON_SIZE_DIALOG)
+        else:
+            i = helper.render_icon(gtk.STOCK_GO_FORWARD, gtk.ICON_SIZE_DIALOG)
 
-    if cli_opts.run_now:
+        n.set_icon_from_pixbuf(i)
+        n.show()
+
+
+
+
+class Supcut(object):
+
+    def __init__(self):
+        """Read configuration, setup Inotify watching"""
+        # shared test attrs
+        self.currently_running = Lock()
+        self.watched = []
+        self.total_tests_n = 0
+        self.failing_tests = []
+        self.failing_tests_selected = set()
+        self.last_run = '--:--:--'
+        self.test_files = []
+
+        self.lock = Lock()
+        self.conf = Conf()
+        self.test_files = self.conf.test_files.split(' ')
+        self.test_files_selected = set(self.test_files)
+        self.cli_opts = self._parse_args()
+
+        self._wm = pyinotify.WatchManager()
+        self._notifier = pyinotify.ThreadedNotifier(self._wm, default_proc_fun=Runner())
+
+        self.watched = []
+        for glob in map(str.strip, self.conf.files.split(' ')):
+            li = self._wm.add_watch(glob, pyinotify.ALL_EVENTS,
+                rec=False, do_glob=True)
+            self.watched.extend(li)
+
+        self.watched_selected = set(self.watched)
+
+        self.screen = Screen(parent=self)
+
+    def add_watch(self, p):
+        self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
+
+    def remove_watch(self, p):
+        self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
+
+
+
+    def _parse_args(self):
+        parser = OptionParser()
+        parser.add_option("-n", "--now",
+            action="store_true", dest="run_now", default=False,
+            help="run nosetests immediately")
+        parser.add_option("-o", "--noseopts",
+            dest="noseopts", help="command to be run")
+
+        options, args = parser.parse_args()
+        return options
+
+    def run(self):
+        """Start notifier loop"""
+        self.screen.refresh()
+
+        if self.cli_opts.run_now:
+            Runner().run_nose()
+
+        self._notifier.start()
+
+        while True:
+            self.screen.handle_keypress()
+            self.screen.refresh()
+
+    def run_test_now(self):
         Runner().run_nose()
 
-    wm = pyinotify.WatchManager()
-    notifier = pyinotify.Notifier(wm, default_proc_fun=Runner())
+    def terminate(self):
+        self.screen.terminate()
+        try:
+            self._notifier.stop()
+        except RuntimeError:
+            pass
+        except OSError:
+            pass
 
-    watched = []
-    for p in conf.files.split(','):
-        p = p.strip()
-        w = wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False, do_glob=True)
-        watched.extend(w)
 
-    say("%d files monitored" % len(watched))
-    for fn in watched:
-        whisper(" %s" % fn)
-    notifier.loop()
+def main():
+    global supcut
+    setproctitle('supcut')
+
+    try:
+        supcut = Supcut()
+        supcut.run()
+    except KeyboardInterrupt:
+        if supcut:
+            supcut.terminate()
+    except Exception, e:
+        if supcut:
+            supcut.terminate()
+        import traceback
+        print traceback.format_exc()
 
 
 if __name__ == '__main__':
