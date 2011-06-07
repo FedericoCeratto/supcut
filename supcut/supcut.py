@@ -137,7 +137,7 @@ class Screen(object):
                 self._screen.addstr(row, col, s, curses.A_BOLD)
             else:
                 self._screen.addstr(row, col, s)
-        except KeyError:
+        except:
             pass
 
     def _print(self, s, bold=None):
