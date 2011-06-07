@@ -19,12 +19,9 @@
 
 from ConfigParser import SafeConfigParser
 import curses
-#TODO: make gtk and pynotify modules optional
-import gtk
 from optparse import OptionParser
 from os import getcwd, makedirs, rename
 from os.path import isdir, isfile
-import pynotify as osd  # this is Notify (OSD messages)
 import pyinotify        # this is Inotify (file alteration)
 from shutil import copyfile
 from setproctitle import setproctitle
@@ -35,32 +32,23 @@ from time import gmtime, strftime
 
 from mailer import send_email
 
+try:
+    import gtk
+    import pynotify as osd  # this is Notify (OSD messages)
+    osd_available = True
+except ImportError:
+    osd_available = False
+
 __version__ = '0.6-unreleased'
 
 supcut = None
 
 def say(s, newline=True):
-    """Print unless in quiet mode"""
-#    if conf and conf.quiet:
-#        return
+    """Print on stdout"""
     if newline:
         print s
     else:
         print s,
-
-def whisper(s, newline=True):
-    """Print only in verbose mode"""
-    return
-    if conf.verbose and not conf.quiet:
-        say(s, newline=newline)
-
-
-#menu = [
-#    ['Monitored files', [], set()],
-#    ['Test files', [], set()],
-#    ['Failing tests', [], set()],
-#    ['Test output']
-#]
 
 
 class Conf(object):
@@ -78,7 +66,7 @@ class Conf(object):
 
     def __getattr__(self, name):
         """Expose a conf variable as an attr"""
-        if name in ('verbose', 'quiet', 'send_osd_notifications'):
+        if name in ('verbose', 'send_osd_notifications'):
             return self.cp.getboolean('global', name)
         elif name.startswith('email_'):
             return self.cp.get('email', name[6:])
@@ -140,6 +128,18 @@ class Screen(object):
         self._cursor = 1
         self._overflow = False
 
+    def addstr(self, row, col, s, bold=False):
+        """Proxy for curses screen.addstr,
+        ignore exceptions to prevent crashing on small terminals
+        """
+        try:
+            if bold:
+                self._screen.addstr(row, col, s, curses.A_BOLD)
+            else:
+                self._screen.addstr(row, col, s)
+        except KeyError:
+            pass
+
     def _print(self, s, bold=None):
         """Print on curses screen"""
         max_y, max_x = self._screen.getmaxyx()
@@ -153,15 +153,12 @@ class Screen(object):
         for line in chunks:
             try:
                 if self._cursor == max_y - 2:
-                    self._screen.addstr(self._cursor, 4, "vvv")
+                    self.addstr(self._cursor, 4, "vvv")
                     self._overflow = True
                     return
                 elif self._cursor > max_y - 2:
                     return
-                if bold:
-                    self._screen.addstr(self._cursor, 2, line, curses.A_BOLD)
-                else:
-                    self._screen.addstr(self._cursor, 2, line)
+                self.addstr(self._cursor, 2, line, bold=bold)
             except:
                 pass
             self._cursor += 1
@@ -205,12 +202,13 @@ class Screen(object):
 
         sup = self._supcut
         with sup.lock:
-            self._print("Watched: %3d  Tot: %3d  Failed: %3d  \
-Last run: %8s  Running: [%s]" % (
+            self._print("Watched: %3d  Tot: %3d  Failed: %3d"
+                " Last run: %8s Len: %7s Running: [%s]" % (
                 len(sup.watched_selected),
                 sup.total_tests_n,
                 len(sup.failing_tests),
                 sup.last_run,
+                sup.last_run_duration,
                 "*" if sup.currently_running.locked() else " "
             ))
 
@@ -218,10 +216,8 @@ Last run: %8s  Running: [%s]" % (
         col = 2
         for n in xrange(4):
             title = self._menu[n][0]
-            if n == self._current_menu:
-                s.addstr(2, col, title, curses.A_BOLD)
-            else:
-                s.addstr(2, col, title)
+            bold = (n == self._current_menu)
+            self.addstr(2, col, title, bold=bold)
             col += len(title) + 2
         self._cursor = 4
         if self._current_menu < 3:
@@ -325,17 +321,17 @@ Last run: %8s  Running: [%s]" % (
         screen.erase()
         screen.border(0)
 
-        screen.addstr(2, 2, "Total: %d Parsed: %d" % \
+        self.addstr(2, 2, "Total: %d Parsed: %d" % \
             (self._stats['total'], self._stats['parsed']))
         ln = 4
         for pid in sorted(traffic):
-            screen.addstr(ln, 4, pid)
+            self.addstr(ln, 4, pid)
             ln += 1
             for src in sorted(traffic[pid]):
                 s = " %s %s" % (src, traffic[pid][src])
-                screen.addstr(ln, 4, s)
+                self.addstr(ln, 4, s)
                 ln += 1
-            screen.addstr(ln, 4, '  ')
+            self.addstr(ln, 4, '  ')
             ln += 1
         screen.refresh()
 
@@ -371,11 +367,17 @@ class Runner(pyinotify.ProcessEvent):
         return frozenset(d.keys()), d
 
     def _tot(self, out):
-        """Get total number of tests ran."""
-        for last in xrange(6):
-            if out[-last].startswith('Ran '):
-                li = out[-last].split()
-                return int(li[1])
+        """Get total number of tests ran.
+        Returns (total, execution_time)
+        """
+        # example: "Ran 74 tests in 3.215s"
+        for line in reversed(out):
+            if line.startswith('Ran '):
+                li = line.split()
+                return (int(li[1]), li[4])
+            elif line.startswith('----'):
+                return (None, None)
+        return (None, None)
 
     def _save_output(self, out):
         """Save new output after renaming the previous one"""
@@ -418,12 +420,12 @@ class Runner(pyinotify.ProcessEvent):
         out = p.stdout.readlines()
         self._save_output(out)
 
-        tot = self._tot(out)
+        tot, run_time = self._tot(out)
         failing, failing_dict = self._failing(out)
 
         old = open('.supcut/output.old').readlines()
         failing_old, failing_old_dict = self._failing(old)
-        tot_old = self._tot(old)
+        tot_old, old_run_time = self._tot(old)
 
         new_failing = failing - failing_old
         fixed = failing_old - failing
@@ -451,6 +453,7 @@ class Runner(pyinotify.ProcessEvent):
             supcut.failing_tests_selected = set(failing)
             supcut.total_tests_n = tot
             supcut.last_run = tstamp
+            supcut.last_run_duration = run_time
 
         supcut.currently_running.release()
         supcut.screen.refresh()
@@ -500,10 +503,18 @@ class Supcut(object):
         self.failing_tests = []
         self.failing_tests_selected = set()
         self.last_run = '--:--:--'
+        self.last_run_duration = '--.---s'
         self.test_files = []
 
         self.lock = Lock()
         self.conf = Conf()
+
+        if self.conf.send_osd_notifications and not osd_available:
+            print "send_osd_notifications is set to True in the configuration"
+            "but the gtk and/or pynotify modules are not available."
+            "\nPlease ensure that the modules are installed."
+            exit(1)
+
         self.test_files = self.conf.test_files.split(' ')
         self.test_files_selected = set(self.test_files)
         self.cli_opts = self._parse_args()
