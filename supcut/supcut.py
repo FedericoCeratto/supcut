@@ -541,6 +541,7 @@ class Supcut(object):
 
 
     def _parse_args(self):
+        """Parse command-line args"""
         parser = OptionParser()
         parser.add_option("-n", "--now",
             action="store_true", dest="run_now", default=False,

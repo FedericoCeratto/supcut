@@ -1,10 +1,11 @@
 Supcut is a simple and unobtrusive Python continuous unit testing tool.
 
-During TDD a certain amount of unit test is usually not satisfied. The developer is not interested in reading the full list of unsuccessful
-tests.
-Instead, it is useful to receive a notification once a previously failing test starts to succeed, and viceversa.
+During TDD a certain amount of unit test is usually not satisfied. A developer
+is usually not interested in reading the output of every unsuccessful tests.
 
-Supcut continuously monitor the Python source and test files in your project development directory and runs Nose when such files are modified.
+Instead, it is handy to receive a notification once a previously failing test starts to succeed, and viceversa.
+
+Supcut continuously monitor the Python source and test files in your project directory and runs Nose when such files are modified.
 
 By comparing the outputs of sequential runs it detects changes in the test outcomes and shows a small popup using Desktop Notification (OSD).
 
@@ -15,4 +16,5 @@ The reported events are:
 - A new test has been added
 - An existing test has been removed
 
-Supcut tries to stay out of the way of your development process: No changes are required to your src or test files to run supcut.
+Supcut tries to stay out of the way of your development process: No changes are
+required to your sources or test files to run it.
