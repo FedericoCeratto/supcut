@@ -42,7 +42,7 @@ except ImportError:
 __version__ = '0.6-unreleased'
 
 supcut = None
-msg = ''
+
 
 def say(s, newline=True):
     """Print on stdout"""
@@ -185,12 +185,9 @@ class Screen(object):
             bold = (n == self._y)
             self._print(" %s %s" % (sel, item), bold=bold)
 
-    def _print_footer(self, s=None):
+    def _print_footer(self, s):
         """Print footer message"""
-        global msg
         max_y, max_x = self._screen.getmaxyx()
-        if s is None:
-            s = msg
         s = s.center(max_x - 16)
         s = "-%s-" % s
         self.addstr(max_y - 1, 7, s)
@@ -207,9 +204,8 @@ class Screen(object):
         for line in self._supcut.failing_tests_dict[test_name][self._scroll:]:
             self._print(line)
 
-    def refresh(self):
+    def refresh(self, msg=None):
         """Refresh curses screen"""
-        global msg
         self._blank()
 
         sup = self._supcut
@@ -223,9 +219,9 @@ class Screen(object):
             #    sup.last_run_duration,
             #    "*" if sup.currently_running.locked() else " "
             #))
-            if sup.currently_running.locked():
+            if msg is None and sup.currently_running.locked():
                 msg = "Running..."
-            else:
+            elif msg is None:
                 msg = "Tot: %d Failed: %d Last run: %s Len: %s" % (
                     sup.total_tests_n,
                     len(sup.failing_tests),
@@ -246,7 +242,7 @@ class Screen(object):
         elif self._current_menu == 3:
             self._print_failing_test()
 
-        self._print_footer()
+        self._print_footer(msg)
         s.refresh()
 
     def handle_keypress(self):
@@ -430,6 +426,9 @@ class Runner(pyinotify.ProcessEvent):
     def run_nose(self):
         """Run nosetests, collects output"""
         global supcut
+        if not supcut.test_files_selected:
+            supcut.screen.refresh(msg='No test files selected')
+            return
         supcut.currently_running.acquire()
         supcut.screen.refresh()
 
@@ -576,7 +575,9 @@ class Supcut(object):
 
     def run(self):
         """Start notifier loop"""
-        self.screen.refresh()
+        welcome = "Supcut %s. %d files monitored" % \
+            (__version__, len(self.watched_selected))
+        self.screen.refresh(msg=welcome)
 
         if self.cli_opts.run_now:
             Runner().run_nose()
