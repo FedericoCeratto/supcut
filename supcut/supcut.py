@@ -532,8 +532,8 @@ class Supcut(object):
         self.conf = Conf()
 
         if self.conf.send_osd_notifications and not osd_available:
-            print "send_osd_notifications is set to True in the configuration"
-            "but the gtk and/or pynotify modules are not available."
+            print "send_osd_notifications is set to True in the configuration " \
+            "but the gtk and/or pynotify modules are not available." \
             "\nPlease ensure that the modules are installed."
             exit(1)
 
