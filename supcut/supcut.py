@@ -42,6 +42,7 @@ except ImportError:
 __version__ = '0.6-unreleased'
 
 supcut = None
+msg = ''
 
 def say(s, newline=True):
     """Print on stdout"""
@@ -184,6 +185,16 @@ class Screen(object):
             bold = (n == self._y)
             self._print(" %s %s" % (sel, item), bold=bold)
 
+    def _print_footer(self, s=None):
+        """Print footer message"""
+        global msg
+        max_y, max_x = self._screen.getmaxyx()
+        if s is None:
+            s = msg
+        s = s.center(max_x - 16)
+        s = "-%s-" % s
+        self.addstr(max_y - 1, 7, s)
+
     def _print_failing_test(self):
         """Print the output of a failing test"""
         try:
@@ -198,26 +209,36 @@ class Screen(object):
 
     def refresh(self):
         """Refresh curses screen"""
+        global msg
         self._blank()
 
         sup = self._supcut
         with sup.lock:
-            self._print("Watched: %3d  Tot: %3d  Failed: %3d"
-                " Last run: %8s Len: %7s Running: [%s]" % (
-                len(sup.watched_selected),
-                sup.total_tests_n,
-                len(sup.failing_tests),
-                sup.last_run,
-                sup.last_run_duration,
-                "*" if sup.currently_running.locked() else " "
-            ))
+            #self._print("Watched: %3d  Tot: %3d  Failed: %3d"
+            #    " Last run: %8s Len: %7s Running: [%s]" % (
+            #    len(sup.watched_selected),
+            #    sup.total_tests_n,
+            #    len(sup.failing_tests),
+            #    sup.last_run,
+            #    sup.last_run_duration,
+            #    "*" if sup.currently_running.locked() else " "
+            #))
+            if sup.currently_running.locked():
+                msg = "Running..."
+            else:
+                msg = "Tot: %d Failed: %d Last run: %s Len: %s" % (
+                    sup.total_tests_n,
+                    len(sup.failing_tests),
+                    sup.last_run,
+                    sup.last_run_duration,
+                )
 
         s = self._screen
         col = 2
         for n in xrange(4):
             title = self._menu[n][0]
             bold = (n == self._current_menu)
-            self.addstr(2, col, title, bold=bold)
+            self.addstr(1, col, title, bold=bold)
             col += len(title) + 2
         self._cursor = 4
         if self._current_menu < 3:
@@ -225,6 +246,7 @@ class Screen(object):
         elif self._current_menu == 3:
             self._print_failing_test()
 
+        self._print_footer()
         s.refresh()
 
     def handle_keypress(self):
