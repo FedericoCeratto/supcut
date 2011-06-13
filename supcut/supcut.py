@@ -208,6 +208,8 @@ class Screen(object):
         """Refresh curses screen"""
         self._blank()
 
+        if hasattr(self._supcut, '_msg'):
+            self._print(self._supcut._msg)
         sup = self._supcut
         with sup.lock:
             #self._print("Watched: %3d  Tot: %3d  Failed: %3d"
@@ -368,20 +370,62 @@ class Screen(object):
 class Runner(pyinotify.ProcessEvent):
     """Run nosetests when needed"""
 
+
+    def _failure_header(self, test, example):
+        """Taken from nosetests, unused"""
+        out = [self.DIVIDER]
+        if test.filename:
+            if test.lineno is not None and example.lineno is not None:
+                lineno = test.lineno + example.lineno + 1
+            else:
+                lineno = '?'
+            out.append('File "%s", line %s, in %s' %
+                       (test.filename, lineno, test.name))
+        else:
+            out.append('Line %s, in %s' % (example.lineno+1, test.name))
+        out.append('Failed example:')
+        source = example.source
+        out.append(_indent(source))
+        return '\n'.join(out)
+
     # nosetest related methods
 
     def _failing(self, out):
         """Build failing tests set and dict"""
+
+        # states: Outside, Header, Traceback, Capture, End
         d = {}
+        state = 'O'
         title = None
+        in_header = False
         for line in out:
-            if line.startswith('FAIL: '):
+            line = line.rstrip()
+            if state in ('O', 'C', 'T') and line == ('=' * 70):
+                state = 'H'
+            elif state == 'H' and line.startswith('FAIL: '):
                 title = line.strip()[6:]
                 d[title] = []
-            elif title:
+            elif state == 'H' and '-' * 10 in line:
+                state = 'T'
+            elif '-' * 70 in line:
+                # after the last test output
+                state = 'E'
+            elif state == 'T':
+                if '-' * 10 in line:
+                    state = 'C'
+                elif 'File "' in line and '", line ' in line:
+
+                    fname, _1, linenum, _2, tname = line.split()[1:6]
+                    fname = fname[1:-2]
+                    title = "%s:%s" % (fname, tname)
+                    d[title] = []
+
+                if title not in d:
+                    d[title] = []
                 d[title].append(line)
-        #FIXME: line containing '============' should be removed
-        #FIXME: spurious "FAIL: " in the test output will break this
+            elif state == 'C':
+                d[title].append(line)
+
         return frozenset(d.keys()), d
 
     def _tot(self, out):
@@ -491,7 +535,7 @@ class Runner(pyinotify.ProcessEvent):
 
     def _send_osd(self, title, s, icon=None):
         """Notify the user using OSD"""
-        n = osd.Notification(title, s)
+        n = osd.Notification(str(title), s)
         #n.set_urgency(osd.URGENCY_NORMAL)
         #n.set_timeout(osd.EXPIRES_NEVER)
         #n.add_action("clicked","Button text", callback_function, None)
@@ -540,6 +584,11 @@ class Supcut(object):
         self.test_files_selected = set(self.test_files)
         self.cli_opts = self._parse_args()
 
+        if self.conf.send_osd_notifications and not osd_available:
+            raise Exception, """gtk and/or pynotify are required \
+to show OSD notifications. Install the modules or disable \
+send_osd_notifications in the configuration file"""
+
         self._wm = pyinotify.WatchManager()
         self._notifier = pyinotify.ThreadedNotifier(self._wm, default_proc_fun=Runner())
 
@@ -557,8 +606,8 @@ class Supcut(object):
         self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
 
     def remove_watch(self, p):
-        self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
-
+        u = self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
+        self._msg = repr(u)
 
 
     def _parse_args(self):
