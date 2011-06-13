@@ -610,6 +610,11 @@ send_osd_notifications in the configuration file"""
 
     def remove_watch(self, p):
         self._wm.del_watch(self._wm.get_wd(p))
+<<<<<<< Updated upstream
+=======
+
+
+>>>>>>> Stashed changes
 
     def _parse_args(self):
         """Parse command-line args"""
