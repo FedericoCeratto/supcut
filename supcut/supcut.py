@@ -184,6 +184,8 @@ class Screen(object):
             sel = "+" if sel else " "
             bold = (n == self._y)
             self._print(" %s %s" % (sel, item), bold=bold)
+        if title == 'Monitored files':
+            self._print("%d files watched" % len(self._supcut._wm.watches))
 
     def _print_footer(self, s):
         """Print footer message"""
@@ -309,7 +311,9 @@ class Screen(object):
         elif c == ord('r'):
             self._supcut.run_test_now()
 
-
+        # redraw screen
+        elif c == ord('d'):
+            self.refresh()
 
     def _toggle(self):
         """Toggle a menu item"""
@@ -320,7 +324,6 @@ class Screen(object):
             if self._current_menu == 0:
                 if item in self._supcut.watched_selected:
                     self._supcut.watched_selected.remove(item)
-                    #FIXME
                     self._supcut.remove_watch(item)
                 else:
                     self._supcut.watched_selected.add(item)
@@ -606,9 +609,7 @@ send_osd_notifications in the configuration file"""
         self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
 
     def remove_watch(self, p):
-        u = self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
-        self._msg = repr(u)
-
+        self._wm.del_watch(self._wm.get_wd(p))
 
     def _parse_args(self):
         """Parse command-line args"""
