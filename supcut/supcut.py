@@ -226,10 +226,13 @@ class Screen(object):
             if msg is None and sup.currently_running.locked():
                 msg = "Running..."
             elif msg is None:
+                tstamp = "--:--:--"
+                if sup.last_run:
+                    tstamp =  strftime("%H:%M:%S", sup.last_run)
                 msg = "Tot: %d Failed: %d Last run: %s Len: %s" % (
                     sup.total_tests_n,
                     len(sup.failing_tests),
-                    sup.last_run,
+                    tstamp,
                     sup.last_run_duration,
                 )
 
@@ -475,7 +478,11 @@ class Runner(pyinotify.ProcessEvent):
         if not supcut.test_files_selected:
             supcut.screen.refresh(msg='No test files selected')
             return
+        if gmtime() == supcut.last_run:
+            return
+
         supcut.currently_running.acquire()
+        start_time = gmtime()
         supcut.screen.refresh()
 
         cmd = "nosetests %s %s" % (
@@ -515,14 +522,12 @@ class Runner(pyinotify.ProcessEvent):
         elif tot_diff < 0:
             self._send_osd('Test removed', "%s test removed" % -tot_diff, icon='success')
 
-        tstamp = strftime("%H:%M:%S", gmtime())
-
         with supcut.lock:
             supcut.failing_tests = list(failing)
             supcut.failing_tests_dict = failing_dict
             supcut.failing_tests_selected = set(failing)
             supcut.total_tests_n = tot
-            supcut.last_run = tstamp
+            supcut.last_run = start_time
             supcut.last_run_duration = run_time
 
         supcut.currently_running.release()
@@ -575,7 +580,7 @@ class Supcut(object):
         self.total_tests_n = 0
         self.failing_tests = []
         self.failing_tests_selected = set()
-        self.last_run = '--:--:--'
+        self.last_run = None
         self.last_run_duration = '--.---s'
         self.test_files = []
 
