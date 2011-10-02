@@ -496,6 +496,9 @@ class Runner(pyinotify.ProcessEvent):
         old = open('.supcut/output.old').readlines()
         failing_old, failing_old_dict = self._failing(old)
         tot_old, old_run_time = self._tot(old)
+        if (tot_old, old_run_time) == (None, None):
+            tot_old = 0
+            old_run_time = 0
 
         new_failing = failing - failing_old
         fixed = failing_old - failing
@@ -540,6 +543,8 @@ class Runner(pyinotify.ProcessEvent):
 
     def _send_osd(self, title, s, icon=None):
         """Notify the user using OSD"""
+        if not osd_available:
+            return
         n = osd.Notification(str(title), s)
         #n.set_urgency(osd.URGENCY_NORMAL)
         #n.set_timeout(osd.EXPIRES_NEVER)
