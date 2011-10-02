@@ -323,11 +323,9 @@ class Screen(object):
             selected = selected.symmetric_difference([item])
             if self._current_menu == 0:
                 if item in self._supcut.watched_selected:
-                    self._supcut.watched_selected.remove(item)
-                    self._supcut.remove_watch(item)
+                    self._supcut.disable_watch(item)
                 else:
-                    self._supcut.watched_selected.add(item)
-                    self._supcut.add_watch(item)
+                    self._supcut.enable_watch(item)
 
             elif self._current_menu == 1:
                 self._supcut.test_files_selected = selected
@@ -471,8 +469,7 @@ class Runner(pyinotify.ProcessEvent):
         return []
 
 
-    # FIXME: note is being run two times on each file change
-    def run_nose(self):
+    def run_nose(self, fname):
         """Run nosetests, collects output"""
         global supcut
         if not supcut.test_files_selected:
@@ -532,11 +529,12 @@ class Runner(pyinotify.ProcessEvent):
         supcut.screen.refresh()
 
 
-
-
-    def process_IN_CLOSE_WRITE(self, event):
+    def process_default(self, event):
         """Run nose when any monitored file has been modified"""
-        self.run_nose()
+        fname = event.pathname
+        if fname not in supcut.watched_selected:
+            return
+        self.run_nose(fname)
 
 
     # OSD related methods
@@ -603,20 +601,26 @@ send_osd_notifications in the configuration file"""
         self._notifier = pyinotify.ThreadedNotifier(self._wm, default_proc_fun=Runner())
 
         self.watched = []
-        for glob in map(str.strip, self.conf.files.split(' ')):
-            li = self._wm.add_watch(glob, pyinotify.ALL_EVENTS,
-                rec=False, do_glob=True)
-            self.watched.extend(li)
+        from glob import iglob
+        import os.path
+        for wfname in self.conf.files.split(' '):
+            wfname = wfname.strip()
+            for fname in iglob(wfname):
+                fname = os.path.abspath(fname)
+                dirname = os.path.dirname(fname)
+                # Setup watching at directory level
+                self._wm.add_watch(dirname, pyinotify.ALL_EVENTS, rec=False)
+                self.watched.append(fname)
 
         self.watched_selected = set(self.watched)
 
         self.screen = Screen(parent=self)
 
-    def add_watch(self, p):
-        self._wm.add_watch(p, pyinotify.ALL_EVENTS, rec=False)
+    def enable_watch(self, fname):
+        self.watched_selected.add(fname)
 
-    def remove_watch(self, p):
-        self._wm.del_watch(self._wm.get_wd(p))
+    def disable_watch(self, fname):
+        self.watched_selected.remove(fname)
 
     def _parse_args(self):
         """Parse command-line args"""
@@ -637,7 +641,7 @@ send_osd_notifications in the configuration file"""
         self.screen.refresh(msg=welcome)
 
         if self.cli_opts.run_now:
-            Runner().run_nose()
+            self.run_test_now()
 
         self._notifier.start()
 
@@ -646,7 +650,7 @@ send_osd_notifications in the configuration file"""
             self.screen.refresh()
 
     def run_test_now(self):
-        Runner().run_nose()
+        Runner().run_nose(None)
 
     def terminate(self):
         self.screen.terminate()
