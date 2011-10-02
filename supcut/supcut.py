@@ -185,7 +185,7 @@ class Screen(object):
             bold = (n == self._y)
             self._print(" %s %s" % (sel, item), bold=bold)
         if title == 'Monitored files':
-            self._print("%d files watched" % len(self._supcut._wm.watches))
+            self._print("%d files watched" % len(self._supcut.watched_selected))
 
     def _print_footer(self, s):
         """Print footer message"""
