@@ -417,8 +417,10 @@ class Runner(pyinotify.ProcessEvent):
                 if '-' * 10 in line:
                     state = 'C'
                 elif 'File "' in line and '", line ' in line:
-
-                    fname, _1, linenum, _2, tname = line.split()[1:6]
+                    try:
+                        fname, _1, linenum, _2, tname = line.split()[1:6]
+                    except:
+                        raise Exception, repr(line)
                     fname = fname[1:-2]
                     title = "%s:%s" % (fname, tname)
                     d[title] = []
@@ -610,11 +612,6 @@ send_osd_notifications in the configuration file"""
 
     def remove_watch(self, p):
         self._wm.del_watch(self._wm.get_wd(p))
-<<<<<<< Updated upstream
-=======
-
-
->>>>>>> Stashed changes
 
     def _parse_args(self):
         """Parse command-line args"""
