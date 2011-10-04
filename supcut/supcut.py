@@ -28,7 +28,7 @@ from setproctitle import setproctitle
 from subprocess import Popen, PIPE, STDOUT
 from sys import exit
 from threading import Lock
-from time import gmtime, strftime
+from time import time, gmtime, strftime
 
 from mailer import send_email
 
@@ -36,6 +36,7 @@ try:
     import gtk
     import pynotify as osd  # this is Notify (OSD messages)
     osd_available = True
+    osd.init('Supcut')
 except ImportError:
     osd_available = False
 
@@ -177,6 +178,10 @@ class Screen(object):
             ['Test output']
         )
         title, li, selected = self._menu[self._current_menu]
+        if title == 'Monitored files':
+            self._print_monitored_files()
+            return
+
         if self._scroll:
             self._print("   ^^^")
         for n, item in enumerate(li[self._scroll:]):
@@ -186,6 +191,27 @@ class Screen(object):
             self._print(" %s %s" % (sel, item), bold=bold)
         if title == 'Monitored files':
             self._print("%d files watched" % len(self._supcut.watched_selected))
+
+    def _print_monitored_files(self):
+        """Print monitored files in a column
+        """
+        title = 'Monitored files'
+        li = self._supcut.watched
+        selected = self._supcut.watched_selected
+        changed = self._supcut.watched_changed
+
+        if self._scroll:
+            self._print("   ^^^")
+        for n, item in enumerate(li[self._scroll:]):
+            sel = item in selected
+            sel = "+" if sel else " "
+            bold = (n == self._y)
+            if item == changed:
+                self._print("!%s %s" % (sel, item), bold=bold)
+            else:
+                self._print(" %s %s" % (sel, item), bold=bold)
+
+        self._print("%d files watched" % len(self._supcut.watched_selected))
 
     def _print_footer(self, s):
         """Print footer message"""
@@ -223,12 +249,13 @@ class Screen(object):
             #    sup.last_run_duration,
             #    "*" if sup.currently_running.locked() else " "
             #))
-            if msg is None and sup.currently_running.locked():
+            running = msg is None and sup.currently_running.locked()
+            if running:
                 msg = "Running..."
             elif msg is None:
                 tstamp = "--:--:--"
                 if sup.last_run:
-                    tstamp =  strftime("%H:%M:%S", sup.last_run)
+                    tstamp =  strftime("%H:%M:%S", gmtime(sup.last_run))
                 msg = "Tot: %d Failed: %d Last run: %s Len: %s" % (
                     sup.total_tests_n,
                     len(sup.failing_tests),
@@ -238,6 +265,7 @@ class Screen(object):
 
         s = self._screen
         col = 2
+        # Print tab names
         for n in xrange(4):
             title = self._menu[n][0]
             bold = (n == self._current_menu)
@@ -478,11 +506,15 @@ class Runner(pyinotify.ProcessEvent):
         if not supcut.test_files_selected:
             supcut.screen.refresh(msg='No test files selected')
             return
-        if gmtime() == supcut.last_run:
-            return
+
+        # Avoid running tests too frequently
+        if supcut.last_run:
+            if time() < supcut.last_run + 10:
+                return
 
         supcut.currently_running.acquire()
-        start_time = gmtime()
+        supcut.watched_changed = fname
+        start_time = time()
         supcut.screen.refresh()
 
         cmd = "nosetests %s %s" % (
@@ -530,6 +562,7 @@ class Runner(pyinotify.ProcessEvent):
             supcut.last_run = start_time
             supcut.last_run_duration = run_time
 
+        supcut.watched_changed = None
         supcut.currently_running.release()
         supcut.screen.refresh()
 
@@ -539,6 +572,10 @@ class Runner(pyinotify.ProcessEvent):
         fname = event.pathname
         if fname not in supcut.watched_selected:
             return
+        if event.maskname in ('IN_OPEN', 'IN_ACCESS'):
+            return
+
+        #print("%s" % event.maskname)
         self.run_nose(fname)
 
 
@@ -618,6 +655,7 @@ send_osd_notifications in the configuration file"""
                 self.watched.append(fname)
 
         self.watched_selected = set(self.watched)
+        self.watched_changed = None
 
         self.screen = Screen(parent=self)
 
