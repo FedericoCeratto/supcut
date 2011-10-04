@@ -43,7 +43,7 @@ except ImportError:
 __version__ = '0.6-unreleased'
 
 supcut = None
-
+log = None
 
 def say(s, newline=True):
     """Print on stdout"""
@@ -51,6 +51,15 @@ def say(s, newline=True):
         print s
     else:
         print s,
+
+class Log(object):
+    """Internal event logging"""
+
+    def __init__(self):
+        self.buffer = []
+
+    def append(self, msg):
+        self.buffer.append("%s %s" % (strftime('%H:%M:%S'), msg))
 
 
 class Conf(object):
@@ -232,7 +241,7 @@ class Screen(object):
         for line in self._supcut.failing_tests_dict[test_name][self._scroll:]:
             self._print(line)
 
-    def refresh(self, msg=None):
+    def refresh(self, msg=None, menu=None):
         """Refresh curses screen"""
         self._blank()
 
@@ -265,6 +274,19 @@ class Screen(object):
 
         s = self._screen
         col = 2
+
+        # TODO: refactor using menu instead of self._current_menu ?
+        if menu == 'logpane':
+            #FIXME: broken
+            for log_line in log.buffer:
+                self._print(" %s" % (log_line))
+                self.addstr(1,1," %s" % (log_line))
+            self.addstr(1,1," %s" % ('aoeu'))
+
+            self._print_footer(msg)
+            s.refresh()
+            return
+
         # Print tab names
         for n in xrange(4):
             title = self._menu[n][0]
@@ -345,6 +367,10 @@ class Screen(object):
         # redraw screen
         elif c == ord('d'):
             self.refresh()
+
+        # log pane
+        elif c == ord('l'):
+            self.refresh(menu='logpane')
 
     def _toggle(self):
         """Toggle a menu item"""
@@ -515,6 +541,7 @@ class Runner(pyinotify.ProcessEvent):
         supcut.currently_running.acquire()
         supcut.watched_changed = fname
         start_time = time()
+        log.append('starting nose')
         supcut.screen.refresh()
 
         cmd = "nosetests %s %s" % (
@@ -572,10 +599,10 @@ class Runner(pyinotify.ProcessEvent):
         fname = event.pathname
         if fname not in supcut.watched_selected:
             return
-        if event.maskname in ('IN_OPEN', 'IN_ACCESS'):
+        if event.maskname in ('IN_OPEN', 'IN_ACCESS', 'IN_CLOSE_NOWRITE'):
             return
 
-        #print("%s" % event.maskname)
+        log.append("%s on %s" % (event.maskname, fname))
         self.run_nose(fname)
 
 
@@ -687,6 +714,7 @@ send_osd_notifications in the configuration file"""
             self.run_test_now()
 
         self._notifier.start()
+        log.append('starting file monitoring')
 
         while True:
             self.screen.handle_keypress()
@@ -696,6 +724,8 @@ send_osd_notifications in the configuration file"""
         Runner().run_nose(None)
 
     def terminate(self):
+        """Reset curses and exit
+        """
         self.screen.terminate()
         try:
             self._notifier.stop()
@@ -704,10 +734,14 @@ send_osd_notifications in the configuration file"""
         except OSError:
             pass
 
+        for log_line in log.buffer:
+            print log_line
 
 def main():
     global supcut
     setproctitle('supcut')
+    global log
+    log = Log()
 
     try:
         supcut = Supcut()
